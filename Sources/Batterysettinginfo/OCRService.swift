@@ -33,7 +33,7 @@ public final class OCRService {
                 }
 
                 // Sort lines top-to-bottom (descending Y) with a small threshold for same-line text (ascending X)
-                let threshold: CGFloat = 0.02
+                let threshold: CGFloat = 0.018
                 textLines.sort { a, b in
                     if abs(a.y - b.y) < threshold {
                         return a.x < b.x
@@ -42,10 +42,21 @@ public final class OCRService {
                 }
 
                 let result = textLines.map { $0.text }
+
+                if AppConfiguration.shared.isDiagnosticModeEnabled {
+                    fputs("[Diagnostic 4] Vision OCR observations: \(observations.count) text regions detected\n", stderr)
+                    fputs("[Diagnostic 5] OCR lines recognized (top-to-bottom): \(result.count) lines\n", stderr)
+                    for (idx, line) in result.prefix(15).enumerated() {
+                        fputs("    [\(idx)] \(line)\n", stderr)
+                    }
+                    if result.count > 15 {
+                        fputs("    ... and \(result.count - 15) more lines\n", stderr)
+                    }
+                }
+
                 continuation.resume(returning: result)
             }
 
-            // Using .fast provides sub-millisecond local OCR without daemon latency or XPC entitlement hangs
             request.recognitionLevel = .fast
             request.usesLanguageCorrection = true
 

@@ -26,15 +26,32 @@ public final class FeedbackManager {
 
         if AppConfiguration.shared.enableCapsLockFeedback {
             queue.async { [weak self] in
-                self?.pulseCapsLock()
+                self?.pulseCapsLock(times: 1)
+            }
+        }
+    }
+
+    /// Delivers a status update or error message to the menu bar and feedback indicators
+    public func deliverStatus(_ message: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.delegate?.didEncounterStatus(status: message)
+        }
+
+        if AppConfiguration.shared.enableCapsLockFeedback {
+            // Pulse twice to signal error or absence of MCQ
+            if message.contains("No MCQ") || message.contains("Failed") || message.contains("Error") {
+                queue.async { [weak self] in
+                    self?.pulseCapsLock(times: 2)
+                }
             }
         }
     }
 
     /// Safely pulses the Caps Lock key state and restores original state.
     /// Note on Apple Silicon macOS: Synthetic CGEvent posts toggle the system modifier flag,
-    /// but hardware LED response varies by keyboard firmware/controller. Original state is always restored.
-    public func pulseCapsLock() {
+    /// but the physical green LED is controlled at the hardware microcontroller/firmware level
+    /// and does not reliably respond to synthetic software events. Original state is always guaranteed restored.
+    public func pulseCapsLock(times: Int = 1) {
         let initialCapsLockState = NSEvent.modifierFlags.contains(.capsLock)
 
         // Virtual keycode for Caps Lock is 57 (0x39)
@@ -47,14 +64,14 @@ public final class FeedbackManager {
             }
         }
 
-        // Pulse Caps Lock
-        postEvent(down: true)
-        postEvent(down: false)
-        usleep(150_000) // 150 ms pulse
-
-        postEvent(down: true)
-        postEvent(down: false)
-        usleep(50_000)
+        for _ in 0..<times {
+            postEvent(down: true)
+            postEvent(down: false)
+            usleep(120_000) // 120ms pulse
+            postEvent(down: true)
+            postEvent(down: false)
+            usleep(80_000)
+        }
 
         // Verify and ensure restoration of original state
         let finalState = NSEvent.modifierFlags.contains(.capsLock)
@@ -62,11 +79,9 @@ public final class FeedbackManager {
             postEvent(down: true)
             postEvent(down: false)
         }
-    }
 
-    public func deliverStatus(_ message: String) {
-        DispatchQueue.main.async { [weak self] in
-            self?.delegate?.didEncounterStatus(status: message)
+        if AppConfiguration.shared.isDiagnosticModeEnabled {
+            fputs("[FeedbackManager] Synthetic Caps Lock pulse executed (\(times)x). Initial=\(initialCapsLockState), Restored=\(!initialCapsLockState == false)\n", stderr)
         }
     }
 }

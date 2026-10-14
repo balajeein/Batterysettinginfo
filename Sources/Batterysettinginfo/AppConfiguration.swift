@@ -72,4 +72,17 @@ public struct AppConfiguration {
     // Privacy & Hardware
     public let strictPrivacy: Bool = true
     public let enableCapsLockFeedback: Bool = true
+
+    /// Diagnostic development mode for console logging
+    public var isDiagnosticModeEnabled: Bool {
+        if let env = ProcessInfo.processInfo.environment["BATTERY_DEBUG"] {
+            return env != "0" && env.lowercased() != "false"
+        }
+        return true // Enabled by default for local development
+    }
+
+    /// Checks if a valid GGUF model exists
+    public func hasConfiguredModel() -> Bool {
+        return resolveModelPath() != nil
+    }
 }

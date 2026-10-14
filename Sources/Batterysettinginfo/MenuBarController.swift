@@ -5,6 +5,18 @@ public protocol MenuBarControllerDelegate: AnyObject {
     func menuBarDidRequestPermissionCheck()
 }
 
+public enum PipelineState {
+    case idle
+    case analyzing
+    case captureFailed(String)
+    case ocrFailed(String)
+    case noMCQFound(String)
+    case mcqFoundNoModel(ParsedMCQ)
+    case modelLoadFailed(String)
+    case inferenceFailed(String)
+    case inferenceSuccess(answer: String, summary: String)
+}
+
 /// Controls the background menu bar status item and status menu
 public final class MenuBarController: NSObject, FeedbackDelegate {
     public static let shared = MenuBarController()
@@ -15,6 +27,7 @@ public final class MenuBarController: NSObject, FeedbackDelegate {
     private var menu: NSMenu!
 
     private var statusMenuItem: NSMenuItem!
+    private var mcqDetailsMenuItem: NSMenuItem!
     private var modelMenuItem: NSMenuItem!
     private var backendMenuItem: NSMenuItem!
     private var screenPermMenuItem: NSMenuItem!
@@ -45,6 +58,11 @@ public final class MenuBarController: NSObject, FeedbackDelegate {
         statusMenuItem = NSMenuItem(title: "Batterysettinginfo: Ready", action: nil, keyEquivalent: "")
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
+
+        mcqDetailsMenuItem = NSMenuItem(title: "Last Detection: None", action: nil, keyEquivalent: "")
+        mcqDetailsMenuItem.isEnabled = false
+        mcqDetailsMenuItem.isHidden = true
+        menu.addItem(mcqDetailsMenuItem)
 
         let triggerItem = NSMenuItem(
             title: "Trigger Analysis (; + ')",
@@ -115,6 +133,74 @@ public final class MenuBarController: NSObject, FeedbackDelegate {
         accessPermMenuItem.title = hasAccess ? "Accessibility (; + '): Granted ✓" : "Accessibility: Not Granted (Click to Allow)"
     }
 
+    public func setPipelineState(_ state: PipelineState) {
+        revertTimer?.invalidate()
+
+        switch state {
+        case .idle:
+            resetToIdle()
+
+        case .analyzing:
+            if let button = statusItem.button { button.title = "⏳..." }
+            statusMenuItem.title = "Status: Analyzing Screen..."
+            mcqDetailsMenuItem.isHidden = true
+
+        case .captureFailed(let err):
+            if let button = statusItem.button { button.title = "❌ Capture Failed" }
+            statusMenuItem.title = "Capture Failed: \(err)"
+            scheduleRevert()
+
+        case .ocrFailed(let err):
+            if let button = statusItem.button { button.title = "⚠️ No Text" }
+            statusMenuItem.title = "OCR: \(err)"
+            scheduleRevert()
+
+        case .noMCQFound(let reason):
+            if let button = statusItem.button { button.title = "⚠️ No MCQ" }
+            statusMenuItem.title = "No MCQ Found: \(reason)"
+            scheduleRevert()
+
+        case .mcqFoundNoModel(let mcq):
+            if let button = statusItem.button { button.title = "✓ MCQ (No Model)" }
+            statusMenuItem.title = "MCQ Detected ✓ (\(mcq.options.count) options) — Missing Model"
+            mcqDetailsMenuItem.isHidden = false
+            let preview = mcq.question.prefix(40)
+            mcqDetailsMenuItem.title = "Question: \"\(preview)...\" (Place .gguf in models folder)"
+            scheduleRevert(after: 6.0)
+
+        case .modelLoadFailed(let err):
+            if let button = statusItem.button { button.title = "❌ Model Error" }
+            statusMenuItem.title = "Model Load Failed: \(err)"
+            scheduleRevert()
+
+        case .inferenceFailed(let err):
+            if let button = statusItem.button { button.title = "❌ Inference Error" }
+            statusMenuItem.title = "Inference Failed: \(err)"
+            scheduleRevert()
+
+        case .inferenceSuccess(let answer, let summary):
+            if let button = statusItem.button { button.title = "✓ [ \(answer) ]" }
+            statusMenuItem.title = "Result: Predicted Option \(answer)"
+            mcqDetailsMenuItem.isHidden = false
+            mcqDetailsMenuItem.title = "Output: \(summary.prefix(50))"
+            scheduleRevert(after: 5.0)
+        }
+    }
+
+    private func scheduleRevert(after seconds: TimeInterval = 4.0) {
+        revertTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
+            self?.resetToIdle()
+        }
+    }
+
+    private func resetToIdle() {
+        if let button = statusItem.button {
+            button.title = "🔋"
+        }
+        statusMenuItem.title = "Batterysettinginfo: Ready"
+        updateMenuState()
+    }
+
     @objc private func triggerClicked() {
         delegate?.menuBarDidRequestTrigger()
     }
@@ -141,42 +227,16 @@ public final class MenuBarController: NSObject, FeedbackDelegate {
     // MARK: - FeedbackDelegate
 
     public func didProduceResult(answer: String, confidenceSummary: String) {
-        revertTimer?.invalidate()
-
-        if let button = statusItem.button {
-            button.title = "✓ [ \(answer) ]"
-        }
-        statusMenuItem.title = "Result: Option \(answer)"
-
-        revertTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { [weak self] _ in
-            self?.resetToIdle()
-        }
+        setPipelineState(.inferenceSuccess(answer: answer, summary: confidenceSummary))
     }
 
     public func didEncounterStatus(status: String) {
-        revertTimer?.invalidate()
-
-        if let button = statusItem.button {
-            if status == "Analyzing..." {
-                button.title = "⏳..."
-            } else if status.contains("No MCQ") {
-                button.title = "⚠️ No MCQ"
-            } else if status.contains("Error") {
-                button.title = "❌ Error"
-            }
+        if status == "Analyzing..." {
+            setPipelineState(.analyzing)
+        } else if status.contains("No MCQ") {
+            setPipelineState(.noMCQFound(status))
+        } else {
+            statusMenuItem.title = status
         }
-        statusMenuItem.title = "Status: \(status)"
-
-        revertTimer = Timer.scheduledTimer(withTimeInterval: 3.5, repeats: false) { [weak self] _ in
-            self?.resetToIdle()
-        }
-    }
-
-    private func resetToIdle() {
-        if let button = statusItem.button {
-            button.title = "🔋"
-        }
-        statusMenuItem.title = "Batterysettinginfo: Ready"
-        updateMenuState()
     }
 }

@@ -81,21 +81,37 @@ cmd_test() {
 
     # 1. QuestionParser Unit Tests
     echo ""
-    echo "--- [1/5] QuestionParser Unit Tests ---"
-    swiftc tests/test_parser.swift Sources/Batterysettinginfo/QuestionParser.swift \
+    echo "--- [1/7] QuestionParser Unit Tests ---"
+    swiftc tests/test_parser.swift Sources/Batterysettinginfo/QuestionParser.swift Sources/Batterysettinginfo/AppConfiguration.swift \
         -o /tmp/battery_tests/run_test_parser
     /tmp/battery_tests/run_test_parser
 
-    # 2. Vision OCR & Pipeline Integration Test
+    # 2. ShortcutManager Independent Logic Tests
     echo ""
-    echo "--- [2/5] Vision OCR & Pipeline Integration Test ---"
-    swiftc tests/test_ocr.swift Sources/Batterysettinginfo/OCRService.swift Sources/Batterysettinginfo/QuestionParser.swift \
+    echo "--- [2/7] ShortcutManager Independent Logic Tests ---"
+    swiftc tests/test_shortcut.swift Sources/Batterysettinginfo/ShortcutManager.swift Sources/Batterysettinginfo/AppConfiguration.swift \
+        -o /tmp/battery_tests/run_test_shortcut
+    /tmp/battery_tests/run_test_shortcut
+
+    # 3. Vision OCR & Pipeline Integration Test
+    echo ""
+    echo "--- [3/7] Vision OCR & Pipeline Integration Test ---"
+    swiftc tests/test_ocr.swift Sources/Batterysettinginfo/OCRService.swift Sources/Batterysettinginfo/QuestionParser.swift Sources/Batterysettinginfo/AppConfiguration.swift \
         -o /tmp/battery_tests/run_test_ocr
     /tmp/battery_tests/run_test_ocr
 
-    # 3. Embedded llama.cpp Native Bridge Test
+    # 4. Real-Screen, Badge UI, and Non-MCQ Regression Tests
     echo ""
-    echo "--- [3/5] Embedded llama.cpp Native Bridge Test ---"
+    echo "--- [4/7] Real-Screen Layout & Non-MCQ Regression Tests ---"
+    swiftc tests/test_regression.swift Sources/Batterysettinginfo/QuestionParser.swift Sources/Batterysettinginfo/OCRService.swift Sources/Batterysettinginfo/LocalInferenceEngine.swift Sources/Batterysettinginfo/AppConfiguration.swift \
+        -Lbuild -lLlamaBridge \
+        -Xlinker -rpath -Xlinker "$REPO_ROOT/build" \
+        -o /tmp/battery_tests/run_test_regression
+    /tmp/battery_tests/run_test_regression
+
+    # 5. Embedded llama.cpp Native Bridge Test
+    echo ""
+    echo "--- [5/7] Embedded llama.cpp Native Bridge Test ---"
     swiftc tests/test_bridge.swift \
         Sources/Batterysettinginfo/AppConfiguration.swift \
         Sources/Batterysettinginfo/LocalInferenceEngine.swift \
@@ -105,19 +121,20 @@ cmd_test() {
         -o /tmp/battery_tests/run_test_bridge
     /tmp/battery_tests/run_test_bridge
 
-    # 4. App Bundle Structure & Stability Test
+    # 6. App Bundle Structure & Stability Test
     echo ""
-    echo "--- [4/5] App Bundle Structure & Launch Stability Test ---"
+    echo "--- [6/7] App Bundle Structure & Launch Stability Test ---"
     ./tests/test_bundle.sh
 
-    # 5. Offline & Zero-Network Audit Test
+    # 7. Offline & Zero-Network Audit Test
     echo ""
-    echo "--- [5/5] Offline & Zero-Network Audit Test ---"
+    echo "--- [7/7] Offline & Zero-Network Audit Test ---"
     ./tests/test_network_audit.sh
 
     echo ""
     echo "======================================================================"
-    echo " ✓ ALL AUTOMATED TESTS PASSED SUCCESSFULLY"
+    echo " ✓ ALL 7 AUTOMATED TEST SUITES PASSED SUCCESSFULLY"
+    echo "======================================================================"
     echo "======================================================================"
 }
 

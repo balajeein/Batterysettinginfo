@@ -83,6 +83,11 @@ public final class LocalInferenceEngine: @unchecked Sendable {
         return loadedModelPath
     }
 
+    /// Checks if a valid GGUF model file is installed in the configured paths
+    public func hasModelFileAvailable() -> Bool {
+        return AppConfiguration.shared.resolveModelPath() != nil
+    }
+
     /// Attempts to load the active model configured in AppConfiguration
     @discardableResult
     public func loadModelIfNeeded() -> Result<String, InferenceError> {
