@@ -1,0 +1,9 @@
+# Build artifacts
+build/
+/tmp/battery_tests/
+
+# System files
+.DS_Store
+
+# Pinned vendor build outputs
+vendor/llama.cpp/build/
