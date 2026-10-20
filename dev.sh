@@ -44,7 +44,7 @@ cmd_run() {
     if [ -n "$PID" ]; then
         echo "✓ Batterysettinginfo is actively running in background menu bar (PID: $PID)"
         echo "  Menu bar status icon: 🔋"
-        echo "  Trigger shortcut: Semicolon (;) + Apostrophe (') pressed together"
+        echo "  Trigger shortcut: Command + Shift + Quote (⌘⇧')"
     else
         echo "❌ ERROR: Application failed to start"
         exit 1
@@ -121,19 +121,31 @@ cmd_test() {
         -o /tmp/battery_tests/run_test_bridge
     /tmp/battery_tests/run_test_bridge
 
-    # 6. App Bundle Structure & Stability Test
+    # 6. Answer validation & exact-question regression tests
     echo ""
-    echo "--- [6/7] App Bundle Structure & Launch Stability Test ---"
+    echo "--- [6/8] Answer Validation & Exact-Question Regression Tests ---"
+    swiftc tests/test_answer_validation.swift \
+        Sources/Batterysettinginfo/AppConfiguration.swift \
+        Sources/Batterysettinginfo/LocalInferenceEngine.swift \
+        Sources/Batterysettinginfo/QuestionParser.swift \
+        -Lbuild -lLlamaBridge \
+        -Xlinker -rpath -Xlinker "$REPO_ROOT/build" \
+        -o /tmp/battery_tests/run_test_answer_validation
+    /tmp/battery_tests/run_test_answer_validation
+
+    # 7. App Bundle Structure & Stability Test
+    echo ""
+    echo "--- [7/8] App Bundle Structure & Launch Stability Test ---"
     ./tests/test_bundle.sh
 
-    # 7. Offline & Zero-Network Audit Test
+    # 8. Offline & Zero-Network Audit Test
     echo ""
-    echo "--- [7/7] Offline & Zero-Network Audit Test ---"
+    echo "--- [8/8] Offline & Zero-Network Audit Test ---"
     ./tests/test_network_audit.sh
 
     echo ""
     echo "======================================================================"
-    echo " ✓ ALL 7 AUTOMATED TEST SUITES PASSED SUCCESSFULLY"
+    echo " ✓ ALL 8 AUTOMATED TEST SUITES PASSED SUCCESSFULLY"
     echo "======================================================================"
     echo "======================================================================"
 }

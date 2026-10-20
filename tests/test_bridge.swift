@@ -2,7 +2,7 @@ import Foundation
 
 @main
 struct TestBridgeMain {
-    static func main() {
+    static func main() async {
         print("=== Running Embedded llama.cpp Native Bridge Tests ===")
 
         let backend = LocalInferenceEngine.shared.backendInfo
@@ -47,6 +47,7 @@ struct TestBridgeMain {
             switch loadResult {
             case .success(let path):
                 print("✓ Successfully loaded real model into embedded llama.cpp: \(path)")
+                print("   Vision support: \(LocalInferenceEngine.shared.hasVisionSupport ? "YES" : "NO")")
 
                 // Perform test inference
                 let testMCQ = ParsedMCQ(
@@ -60,19 +61,16 @@ struct TestBridgeMain {
                     rawText: "What is the capital of France?\nA) Berlin\nB) Paris\nC) Rome\nD) Madrid"
                 )
 
-                let expectation = DispatchSemaphore(value: 0)
-                Task {
-                    do {
-                        let (answer, rawOutput) = try await LocalInferenceEngine.shared.solve(mcq: testMCQ)
-                        print("✓ Inference succeeded!")
-                        print("   Predicted Option: \(answer)")
-                        print("   Raw Output: \(rawOutput)")
-                    } catch {
-                        print("❌ Inference error: \(error)")
-                    }
-                    expectation.signal()
+                do {
+                    let result = try await LocalInferenceEngine.shared.solve(mcq: testMCQ)
+                    print("✓ Inference succeeded!")
+                    print("   Predicted Option: \(result.optionLabel)")
+                    print("   Raw Output: \(result.rawOutput)")
+                } catch {
+                    print("❌ Inference error: \(error)")
                 }
-                expectation.wait()
+
+                LocalInferenceEngine.shared.unloadModel()
 
             case .failure(let err):
                 print("⚠️ Model found but failed to load: \(err.localizedDescription)")

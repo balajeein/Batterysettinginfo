@@ -94,6 +94,63 @@ func calculateTotal(items: [Double]) -> Double {
         let res7 = parser.parse(rawText: codeSnippet)
         assertTrue(res7 == nil, "Code snippet should be rejected as non-MCQ")
 
+        // Test 8: Revision-page answer cards must keep option boundaries and
+        // stop before the page's "INCORRECT ANSWER" feedback.
+        let revisionPageMCQ = """
+        QUESTION 1/3
+        What is the VLC command-line flag that tells VLC to exit automatically when a song finishes playing?
+        A) --auto-quit
+        B) --exit-on-finish
+        C) --play-and-exit
+        D) --single-instance
+        INCORRECT ANSWER
+        """
+        let res8 = parser.parse(rawText: revisionPageMCQ)
+        assertTrue(res8 != nil, "Revision-page MCQ should be parsed")
+        assertTrue(res8?.options.count == 4, "Revision-page MCQ should keep all four options")
+        assertTrue(res8?.options[2].text == "--play-and-exit", "Option C must not be shifted into option B")
+
+        // Never accept positional fallback when OCR still exposes conflicting
+        // labels; a false negative is safer than an incorrect answer.
+        let shiftedRevision = """
+        What is the VLC command-line flag that tells VLC to exit automatically when a song finishes playing?
+        --auto-quit
+        B) --exit-on-finish --play-and-exit
+        D) --single-instance
+        INCORRECT ANSWER
+        """
+        let res9 = parser.parse(rawText: shiftedRevision)
+        assertTrue(res9 == nil, "Shifted option extraction must be rejected")
+
+        // Newton School layout: OCR can omit the small A-D badges and the
+        // question's terminal code sample must not become Option A.
+        let unlabeledCodeQuestion = [
+            "Newton School",
+            "QUESTION 3/3",
+            "Which statement best describes the relationship between tput cup command and:",
+            "process.stdout.write('\\x1B[row;colH');",
+            "One controls audio playback while the other controls video playback",
+            "Both perform terminal cursor positioning",
+            "One clears the screen while the other saves cursor position",
+            "They are unrelated terminal operations"
+        ]
+        let res10 = parser.parse(lines: unlabeledCodeQuestion)
+        assertTrue(res10 != nil, "Unlabeled Newton School code-question layout should be parsed")
+        assertTrue(res10?.question.contains("process.stdout.write") == true, "Code sample should remain part of the question")
+        assertTrue(res10?.options.count == 4, "Unlabeled layout should produce four positional options")
+        assertTrue(res10?.options[1].text == "Both perform terminal cursor positioning", "Option B must remain aligned after skipping code sample")
+
+        // Browser/header text must never be accepted as an answer-card cluster.
+        let browserNoiseCluster = [
+            "Newton School",
+            "A) School",
+            "B) QUESTION 3/3",
+            "C) Which statement best describes the relationship between tput cup command and:",
+            "D) One controls audio playback while the other controls video playback"
+        ]
+        let res11 = parser.parse(lines: browserNoiseCluster)
+        assertTrue(res11 == nil, "Browser/header option-like noise must be rejected")
+
         print("=== All QuestionParser Unit Tests PASSED Successfully ===")
     }
 }

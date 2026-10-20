@@ -10,7 +10,13 @@ public final class OCRService {
 
     /// Performs optical character recognition on an in-memory CGImage.
     /// Returns extracted lines ordered naturally from top to bottom, left to right.
-    public func recognizeText(from cgImage: CGImage) async throws -> [String] {
+    /// The caller can request a second, deliberately different OCR pass when
+    /// the first pass cannot produce a coherent MCQ.
+    public func recognizeText(
+        from cgImage: CGImage,
+        recognitionLevel: VNRequestTextRecognitionLevel = .accurate,
+        usesLanguageCorrection: Bool = true
+    ) async throws -> [String] {
         return try await withCheckedThrowingContinuation { continuation in
             var textLines: [(y: CGFloat, x: CGFloat, text: String)] = []
 
@@ -43,9 +49,9 @@ public final class OCRService {
 
                 let result = textLines.map { $0.text }
 
+                batteryDiagnosticLog("[Diagnostic 4] Vision OCR observations: \(observations.count) text regions detected")
+                batteryDiagnosticLog("[Diagnostic 5] OCR lines recognized (top-to-bottom): \(result.count) lines")
                 if AppConfiguration.shared.isDiagnosticModeEnabled {
-                    fputs("[Diagnostic 4] Vision OCR observations: \(observations.count) text regions detected\n", stderr)
-                    fputs("[Diagnostic 5] OCR lines recognized (top-to-bottom): \(result.count) lines\n", stderr)
                     for (idx, line) in result.prefix(15).enumerated() {
                         fputs("    [\(idx)] \(line)\n", stderr)
                     }
@@ -57,8 +63,15 @@ public final class OCRService {
                 continuation.resume(returning: result)
             }
 
-            request.recognitionLevel = .fast
-            request.usesLanguageCorrection = true
+            request.recognitionLevel = recognitionLevel
+            request.usesLanguageCorrection = usesLanguageCorrection
+            request.recognitionLanguages = ["en-US"]
+            request.minimumTextHeight = 0.004
+            request.customWords = [
+                "iOS", "Android", "Swift", "Kotlin", "Java", "API", "REST", "JSON",
+                "HTTP", "MVC", "MVVM", "UI", "UX", "SQL", "SDK", "IDE", "OOP",
+                "UML", "Git", "AppDelegate", "UIViewController", "ViewModel", "Repository"
+            ]
 
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             do {

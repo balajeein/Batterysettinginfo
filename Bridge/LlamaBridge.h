@@ -49,6 +49,42 @@ int llama_engine_infer(
     float temperature
 );
 
+/// Load mmproj vision projector into engine.
+/// Returns true on success, false on failure.
+bool llama_engine_load_mmproj(
+    LlamaEngine* engine,
+    const char* mmproj_path
+);
+
+/// Checks if mmproj vision model is loaded and ready
+bool llama_engine_has_vision(LlamaEngine* engine);
+
+/// Run multimodal vision inference on an in-memory RGB pixel buffer.
+/// rgb_bytes: raw RGB pixel bytes (width * height * 3)
+/// width, height: pixel dimensions of the image
+/// prompt: user instruction / text prompt
+/// output_buf: buffer to receive output string
+/// max_output_len: size of output_buf
+/// max_tokens: maximum tokens to generate
+/// temperature: sampling temperature
+/// Returns number of characters written, or negative on failure:
+///   -1: invalid engine or parameters
+///   -2: vision projector not loaded
+///   -3: bitmap or tokenization failure
+///   -4: context eval failure
+///   -5: decode failure
+int llama_engine_infer_vision(
+    LlamaEngine* engine,
+    const unsigned char* rgb_bytes,
+    int width,
+    int height,
+    const char* prompt,
+    char* output_buf,
+    int max_output_len,
+    int max_tokens,
+    float temperature
+);
+
 #ifdef __cplusplus
 }
 #endif

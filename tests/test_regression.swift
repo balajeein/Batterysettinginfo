@@ -121,6 +121,68 @@ struct TestRegressionMain {
         }
 
         // ---------------------------------------------------------------------
+        // Test 2b: Unlabeled Option Cards (Newton School Assessment Layout)
+        // ---------------------------------------------------------------------
+        print("\n--- Test 2b: Unlabeled Option Cards (Newton School Assessment Layout) ---")
+        let assessmentLines = [
+            "Chrome File Edit View History Bookmarks Profiles Tab Window Help",
+            "Newton School",
+            "https://my.newtonschool.co/course/92xcz4jmqrkv/assessment/5jjfsqw5905l?show_revision=1",
+            "< Back",
+            "Show Original Attempt",
+            "QUESTION 1/1",
+            "For the 1011 sequence detector (Moore, 5 states), how many flip-flops are needed under",
+            "binary encoding versus one-hot encoding?",
+            "• 0/2",
+            "Binary: 2 FFs, One-Hot: 5 FFs",
+            "Binary: 3 FFs, One-Hot: 5 FFs",
+            "Binary: 5 FFs, One-Hot: 5 FFs",
+            "Binary: 3 FFs, One-Hot: 8 FFs"
+        ]
+
+        let res2b = parser.parseWithDiagnostics(lines: assessmentLines)
+        switch res2b {
+        case .success(let mcq):
+            assertTrue(mcq.options.count == 4, "Should extract 4 options from unlabeled cards")
+            assertTrue(mcq.options[0].label == "A" && mcq.options[0].text == "Binary: 2 FFs, One-Hot: 5 FFs", "Option A assigned correctly")
+            assertTrue(mcq.options[1].label == "B" && mcq.options[1].text == "Binary: 3 FFs, One-Hot: 5 FFs", "Option B assigned correctly")
+            assertTrue(mcq.question.contains("Moore, 5 states"), "Question text extracted correctly")
+        case .failure(let reason):
+            assertTrue(false, "Unlabeled card parsing failed: \(reason)")
+        }
+
+        // ---------------------------------------------------------------------
+        // Test 2c: OCR drops the first two option badges on a wrapped question
+        // ---------------------------------------------------------------------
+        print("\n--- Test 2c: Mixed unlabeled/labeled option cards from OCR ---")
+        let mixedBadgeLines = [
+            "Chrome File Edit View History Bookmarks Profiles Tab Window Help",
+            "QUESTION 1/4",
+            "In vanilla (batch) gradient descent, the update rule is θ ← θ − η∇L(θ).",
+            "What does the gradient ∇L(θ) use to compute the update at each",
+            "step?",
+            "A single randomly chosen training example",
+            "The loss computed over the entire training dataset",
+            "C Only the previous update's direction, ignoring the current loss",
+            "D A randomly sampled subset that changes size every step",
+            "< Previous",
+            "Next >"
+        ]
+
+        let res2c = parser.parseWithDiagnostics(lines: mixedBadgeLines)
+        switch res2c {
+        case .success(let mcq):
+            assertTrue(mcq.options.count == 4, "Mixed OCR option cards should produce 4 options")
+            assertTrue(mcq.options[0].label == "A" && mcq.options[0].text.contains("single randomly"), "Unlabeled first card assigned A")
+            assertTrue(mcq.options[1].label == "B" && mcq.options[1].text.contains("entire training"), "Unlabeled second card assigned B")
+            assertTrue(mcq.options[2].label == "C" && mcq.options[2].text == "Only the previous update's direction, ignoring the current loss", "Labeled third card preserved cleanly as C")
+            assertTrue(mcq.options[3].label == "D" && mcq.options[3].text == "A randomly sampled subset that changes size every step", "Labeled fourth card preserved cleanly as D")
+            assertTrue(mcq.question.contains("step?"), "Short final question line included in wrapped question")
+        case .failure(let reason):
+            assertTrue(false, "Mixed OCR option parsing failed: \(reason)")
+        }
+
+        // ---------------------------------------------------------------------
         // Test 3: Multiple Screen Resolutions / Retina scaling
         // ---------------------------------------------------------------------
         print("\n--- Test 3: Resolution Invariance (1512x982, 1920x1080, 3024x1964) ---")

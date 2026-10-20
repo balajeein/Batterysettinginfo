@@ -1,34 +1,45 @@
 import AppKit
-import Carbon
 import CoreGraphics
+import ApplicationServices
+import Carbon
 
 /// Protocol for shortcut trigger callbacks
 public protocol ShortcutManagerDelegate: AnyObject {
     func didTriggerAnalysisShortcut()
 }
 
-/// Global keyboard shortcut manager detecting simultaneous chord presses (default: ';' and '\'')
+public enum ShortcutRegistrationStatus: Equatable {
+    case uninitialized
+    case active
+    case failedAccessibilityNotGranted
+    case failedTapCreation(String)
+}
+
+/// Global keyboard shortcut manager for Command + Shift + Quote (⌘⇧').
+///
+/// Carbon's RegisterEventHotKey is used instead of a listen-only CGEventTap.
+/// The former is designed for global application hotkeys and continues to
+/// receive the chord while another application owns keyboard focus.
 public final class ShortcutManager {
     public static let shared = ShortcutManager()
 
     public weak var delegate: ShortcutManagerDelegate?
 
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
-    private var globalMonitor: Any?
+    private var hotKeyRef: EventHotKeyRef?
+    private var eventHandlerRef: EventHandlerRef?
 
-    private var isKey1Down = false
-    private var isKey2Down = false
-    private var key1DownTime: Date?
-    private var key2DownTime: Date?
-    private var hasTriggeredCurrentChord = false
+    private let hotKeyID = EventHotKeyID(signature: OSType(0x42534948), id: 1) // "BSIH"
 
+    public private(set) var registrationStatus: ShortcutRegistrationStatus = .uninitialized
+    public private(set) var registrationDiagnostic: String = "Not initialized"
+
+    public private(set) var targetKeyCode: Int64 = 39 // ANSI Quote '\''
+    public let shortcutDisplayString = "⌘⇧'"
+
+    // State tracking to prevent duplicate triggers
+    private var isTargetKeyDown = false
     private var lastTriggerTime: Date = Date.distantPast
-    private let cooldownInterval: TimeInterval = 1.2
-    private let chordWindow: TimeInterval = 0.35
-
-    public private(set) var primaryKey: Int64 = 41   // ANSI Semicolon ';'
-    public private(set) var secondaryKey: Int64 = 39 // ANSI Quote '\''
+    private let cooldownInterval: TimeInterval = 0.5
 
     private init() {
         resolveKeyCodes()
@@ -38,22 +49,50 @@ public final class ShortcutManager {
         stop()
     }
 
-    /// Resolves virtual key codes for ';' and '\'' from the active keyboard layout
-    private func resolveKeyCodes() {
-        if let k1 = findKeyCode(for: ";") {
-            self.primaryKey = Int64(k1)
-        } else {
-            self.primaryKey = Int64(AppConfiguration.shared.primaryKeyCode)
+    private static let hotKeyHandler: EventHandlerUPP = { _, event, userData in
+        guard let event, let userData else {
+            return OSStatus(eventNotHandledErr)
         }
 
-        if let k2 = findKeyCode(for: "'") {
-            self.secondaryKey = Int64(k2)
+        var receivedID = EventHotKeyID()
+        let status = GetEventParameter(
+            event,
+            EventParamName(kEventParamDirectObject),
+            EventParamType(typeEventHotKeyID),
+            nil,
+            MemoryLayout<EventHotKeyID>.size,
+            nil,
+            &receivedID
+        )
+
+        guard status == noErr else {
+            batteryDiagnosticLog("[ShortcutManager] Could not read Carbon hotkey event parameter (status=\(status))", type: .error)
+            return status
+        }
+
+        let manager = Unmanaged<ShortcutManager>.fromOpaque(userData).takeUnretainedValue()
+        guard receivedID.signature == manager.hotKeyID.signature,
+              receivedID.id == manager.hotKeyID.id else {
+            return OSStatus(eventNotHandledErr)
+        }
+
+        batteryDiagnosticLog("[ShortcutManager] *** SHORTCUT DETECTED (\(manager.shortcutDisplayString)) -> TRIGGERING PIPELINE ***")
+        DispatchQueue.main.async { [weak manager] in
+            manager?.delegate?.didTriggerAnalysisShortcut()
+        }
+        return noErr
+    }
+
+    /// Resolves virtual key code for '\'' from the active keyboard layout, falling back to 39
+    private func resolveKeyCodes() {
+        if let k = findKeyCode(for: "'") {
+            self.targetKeyCode = Int64(k)
         } else {
-            self.secondaryKey = Int64(AppConfiguration.shared.secondaryKeyCode)
+            self.targetKeyCode = Int64(AppConfiguration.shared.primaryKeyCode)
         }
 
         if AppConfiguration.shared.isDiagnosticModeEnabled {
-            fputs("[ShortcutManager] Initialized keycodes: ';'=\(primaryKey), '\''=\(secondaryKey)\n", stderr)
+            fputs("[ShortcutManager] Initialized target keycode: '\''=\(targetKeyCode) (displayed as \(shortcutDisplayString))\n", stderr)
         }
     }
 
@@ -107,168 +146,137 @@ public final class ShortcutManager {
         _ = AXIsProcessTrustedWithOptions(options)
     }
 
-    /// Starts global event tap monitoring and secondary AppKit global monitor
+    /// Starts the system-wide Carbon hotkey for ⌘⇧'.
     public func start() -> Bool {
-        guard eventTap == nil else { return true }
+        guard hotKeyRef == nil else { return true }
 
-        let trusted = isAccessibilityGranted
-        if AppConfiguration.shared.isDiagnosticModeEnabled {
-            fputs("[ShortcutManager] Starting shortcut monitor. Accessibility trusted: \(trusted)\n", stderr)
+        batteryDiagnosticLog("[ShortcutManager] Registering Carbon global hotkey for \(shortcutDisplayString) (keycode \(targetKeyCode))")
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: OSType(kEventHotKeyPressed)
+        )
+        let userData = Unmanaged.passUnretained(self).toOpaque()
+        let handlerStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            ShortcutManager.hotKeyHandler,
+            1,
+            &eventType,
+            userData,
+            &eventHandlerRef
+        )
+        guard handlerStatus == noErr else {
+            registrationStatus = .failedTapCreation("InstallEventHandler failed with status \(handlerStatus)")
+            registrationDiagnostic = "Carbon hotkey event handler installation failed (status=\(handlerStatus))"
+            batteryDiagnosticLog("[ShortcutManager] Registration failed: \(registrationDiagnostic)", type: .error)
+            return false
         }
 
-        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
-
-        let callback: CGEventTapCallBack = { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-            guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
-            let manager = Unmanaged<ShortcutManager>.fromOpaque(refcon).takeUnretainedValue()
-
-            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                if let tap = manager.eventTap {
-                    CGEvent.tapEnable(tap: tap, enable: true)
-                }
-                return Unmanaged.passUnretained(event)
+        var registeredHotKey: EventHotKeyRef?
+        let hotKeyStatus = RegisterEventHotKey(
+            UInt32(targetKeyCode),
+            UInt32(cmdKey | shiftKey),
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &registeredHotKey
+        )
+        guard hotKeyStatus == noErr, let registeredHotKey else {
+            if let handler = eventHandlerRef {
+                RemoveEventHandler(handler)
+                eventHandlerRef = nil
             }
-
-            manager.handleKeyEvent(type: type, event: event)
-            return Unmanaged.passUnretained(event)
+            registrationStatus = .failedTapCreation("RegisterEventHotKey failed with status \(hotKeyStatus)")
+            registrationDiagnostic = "Carbon global hotkey registration failed (status=\(hotKeyStatus)); another application may own this shortcut"
+            batteryDiagnosticLog("[ShortcutManager] Registration failed: \(registrationDiagnostic)", type: .error)
+            return false
         }
 
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-
-        // Use .cgSessionEventTap which receives all login session events under standard Accessibility
-        if let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .listenOnly,
-            eventsOfInterest: CGEventMask(eventMask),
-            callback: callback,
-            userInfo: selfPtr
-        ) {
-            self.eventTap = tap
-            let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            self.runLoopSource = source
-            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-            if AppConfiguration.shared.isDiagnosticModeEnabled {
-                fputs("[ShortcutManager] CGEventTap (.cgSessionEventTap) created and attached to main run loop successfully\n", stderr)
-            }
-        } else {
-            if AppConfiguration.shared.isDiagnosticModeEnabled {
-                fputs("[ShortcutManager] WARNING: CGEvent.tapCreate returned nil. Check Accessibility permissions.\n", stderr)
-            }
-        }
-
-        // Install secondary AppKit global event monitor for dual-path reliability
-        if globalMonitor == nil {
-            globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] nsEvent in
-                guard let self = self else { return }
-                let code = Int64(nsEvent.keyCode)
-                if nsEvent.type == .keyDown {
-                    self.processRawKey(code: code, isDown: true)
-                } else if nsEvent.type == .keyUp {
-                    self.processRawKey(code: code, isDown: false)
-                }
-            }
-            if AppConfiguration.shared.isDiagnosticModeEnabled {
-                fputs("[ShortcutManager] AppKit global event monitor installed\n", stderr)
-            }
-        }
-
-        return eventTap != nil || globalMonitor != nil
+        hotKeyRef = registeredHotKey
+        registrationStatus = .active
+        registrationDiagnostic = "Active (Carbon RegisterEventHotKey for \(shortcutDisplayString), no Accessibility permission required)"
+        batteryDiagnosticLog("[ShortcutManager] Carbon global hotkey registered successfully for \(shortcutDisplayString)")
+        return true
     }
 
-    /// Stops monitoring
+    /// Stops monitoring and detaches from run loop
     public func stop() {
-        if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-            runLoopSource = nil
+        if let hotKey = hotKeyRef {
+            UnregisterEventHotKey(hotKey)
+            hotKeyRef = nil
         }
-        if let tap = eventTap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            eventTap = nil
+        if let handler = eventHandlerRef {
+            RemoveEventHandler(handler)
+            eventHandlerRef = nil
         }
-        if let monitor = globalMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalMonitor = nil
-        }
-        isKey1Down = false
-        isKey2Down = false
-        hasTriggeredCurrentChord = false
+        isTargetKeyDown = false
+        registrationStatus = .uninitialized
+        registrationDiagnostic = "Stopped"
     }
 
-    /// Internal handler from CGEventTap
-    private func handleKeyEvent(type: CGEventType, event: CGEvent) {
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        let isDown = (type == .keyDown)
-        processRawKey(code: keyCode, isDown: isDown)
-    }
+    /// Core shortcut rule evaluator: Command + Shift + Quote (⌘⇧')
+    /// Returns true if the shortcut triggered the delegate.
+    @discardableResult
+    public func handleKeyEvent(keyCode: Int64, flags: CGEventFlags, isDown: Bool, isAutorepeat: Bool = false) -> Bool {
+        // 1. Only respond to target key
+        guard keyCode == targetKeyCode else {
+            return false
+        }
 
-    /// Central chord processing logic
-    public func processRawKey(code: Int64, isDown: Bool) {
+        // 2. Key up: reset down state to allow subsequent triggers
+        if !isDown {
+            isTargetKeyDown = false
+            return false
+        }
+
+        // 3. Ignore auto-repeat events
+        if isAutorepeat {
+            if AppConfiguration.shared.isDiagnosticModeEnabled {
+                fputs("[ShortcutManager] Quote key-down ignored: auto-repeat\n", stderr)
+            }
+            return false
+        }
+
+        // 4. Ignore repeated key-down while already held down
+        if isTargetKeyDown {
+            return false
+        }
+
+        // 5. Explicitly require Command and Shift modifiers
+        let hasCommand = flags.contains(.maskCommand)
+        let hasShift = flags.contains(.maskShift)
+        let hasForbiddenModifiers = flags.contains(.maskControl) || flags.contains(.maskAlternate)
+
+        guard hasCommand && hasShift && !hasForbiddenModifiers else {
+            isTargetKeyDown = true // Marked down without trigger
+            return false
+        }
+
+        // 6. Cooldown interval check
         let now = Date()
-
-        if code == primaryKey {
-            if isDown {
-                isKey1Down = true
-                key1DownTime = now
-                if AppConfiguration.shared.isDiagnosticModeEnabled {
-                    fputs("[ShortcutManager] Detected chord key: ';' (down), chord active: \(isKey1Down && isKey2Down)\n", stderr)
-                }
-                evaluateChord()
-            } else {
-                isKey1Down = false
-                if !isKey1Down && !isKey2Down {
-                    hasTriggeredCurrentChord = false
-                }
-            }
-        } else if code == secondaryKey {
-            if isDown {
-                isKey2Down = true
-                key2DownTime = now
-                if AppConfiguration.shared.isDiagnosticModeEnabled {
-                    fputs("[ShortcutManager] Detected chord key: '\'' (down), chord active: \(isKey1Down && isKey2Down)\n", stderr)
-                }
-                evaluateChord()
-            } else {
-                isKey2Down = false
-                if !isKey1Down && !isKey2Down {
-                    hasTriggeredCurrentChord = false
-                }
-            }
+        guard now.timeIntervalSince(lastTriggerTime) >= cooldownInterval else {
+            isTargetKeyDown = true
+            return false
         }
-        // Notice: zero logging for any other keycode, preserving complete user privacy
+
+        isTargetKeyDown = true
+        lastTriggerTime = now
+
+        if AppConfiguration.shared.isDiagnosticModeEnabled {
+            fputs("[ShortcutManager] *** SHORTCUT DETECTED (\(shortcutDisplayString)) -> TRIGGERING PIPELINE ***\n", stderr)
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.delegate?.didTriggerAnalysisShortcut()
+        }
+        return true
     }
 
-    private func evaluateChord() {
-        guard !hasTriggeredCurrentChord else { return }
-
-        var shouldTrigger = false
-
-        // Condition 1: Both keys currently held down
-        if isKey1Down && isKey2Down {
-            shouldTrigger = true
-        }
-
-        // Condition 2: Overlapping rapid press within chord time window
-        if !shouldTrigger, let t1 = key1DownTime, let t2 = key2DownTime {
-            if abs(t1.timeIntervalSince(t2)) <= chordWindow {
-                shouldTrigger = true
-            }
-        }
-
-        if shouldTrigger {
-            let now = Date()
-            if now.timeIntervalSince(lastTriggerTime) >= cooldownInterval {
-                lastTriggerTime = now
-                hasTriggeredCurrentChord = true
-                if AppConfiguration.shared.isDiagnosticModeEnabled {
-                    fputs("[ShortcutManager] *** CHORD DETECTED (';' + '\'') -> TRIGGERING PIPELINE ***\n", stderr)
-                }
-                DispatchQueue.main.async { [weak self] in
-                    self?.delegate?.didTriggerAnalysisShortcut()
-                }
-            }
-        }
+    /// Simulates registration failure for diagnostic and unit testing
+    public func simulateRegistrationFailure(forTestingReason reason: String) {
+        stop()
+        registrationStatus = .failedTapCreation(reason)
+        registrationDiagnostic = "Registration failure: \(reason)"
     }
 
     /// Programmatic trigger for testing and menu item activation

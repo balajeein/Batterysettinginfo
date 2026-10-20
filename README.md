@@ -36,7 +36,7 @@ Keyboard Shortcut (';' + '\'')
 |---|---|---|
 | `AppDelegate.swift` | `Sources/Batterysettinginfo/` | Coordinates the end-to-end pipeline and app lifecycle |
 | `MenuBarController.swift` | `Sources/Batterysettinginfo/` | Manages `NSStatusItem`, status menu, and visual result feedback |
-| `ShortcutManager.swift` | `Sources/Batterysettinginfo/` | Global chord detection for `;` + `'` via `CGEventTap` |
+| `ShortcutManager.swift` | `Sources/Batterysettinginfo/` | Global `⌘⇧'` hotkey via Carbon `RegisterEventHotKey` |
 | `ScreenCaptureService.swift` | `Sources/Batterysettinginfo/` | In-memory display capture via `ScreenCaptureKit` |
 | `OCRService.swift` | `Sources/Batterysettinginfo/` | Apple Vision text recognition with bounding box sorting |
 | `QuestionParser.swift` | `Sources/Batterysettinginfo/` | MCQ detection, option extraction, and non-MCQ rejection |
@@ -96,10 +96,9 @@ Builds the pinned `llama.cpp` dependency (`b11620`), compiles `libLlamaBridge.dy
    - Prompted on first launch or via **Menu Bar > Screen Recording: Click to Allow**.
    - System Settings: *Privacy & Security → Screen Recording*.
 
-2. **Accessibility** (`CGEventTap`):
-   - Required to detect global key events when other applications have focus.
-   - Prompted via system dialog or via **Menu Bar > Accessibility: Click to Allow**.
-   - System Settings: *Privacy & Security → Accessibility*.
+2. **Accessibility**:
+   - The global `⌘⇧'` shortcut uses Carbon `RegisterEventHotKey` and does not require Accessibility permission.
+   - Accessibility may still be useful for other keyboard automation tools, but it is not required by this application’s shortcut path.
 
 ---
 
@@ -135,16 +134,19 @@ If no model is installed, the menu bar displays `Model: No GGUF Found (Click Ope
 
 ## Keyboard Shortcut & Caps Lock Feedback
 
-### Global Shortcut (`;` + `'`)
-- Primary key: Semicolon `;` (`keyCode: 41`)
-- Secondary key: Quote/Apostrophe `'` (`keyCode: 39`)
-- Detects simultaneous key presses across the system without stealing focus.
-- Also available as a manual menu item: **Trigger Analysis (; + ')**.
+### Global Shortcut (`⌘⇧'`)
+- Key: Quote/Apostrophe `'` (`keyCode: 39`)
+- Modifier mask: Command + Shift.
+- Registered through Carbon so it works while Chrome or another application has focus.
+- Also available as a manual menu item: **Trigger Analysis (⌘⇧')**.
 
 ### Hardware Feedback Investigation
-- **Caps Lock Modifier**: The application pulses the system Caps Lock modifier state using `CGEventPost` (`keyCode: 57`) and guarantees restoration of the user's initial state.
-- **Hardware LED Constraint**: On modern Apple Silicon keyboards, the physical green LED indicator is managed by keyboard microcontroller firmware and Secure Enclave anti-spoofing policies; synthetic events toggle the software modifier flag, but may not illuminate the physical LED.
-- **Visual Menu Bar Feedback**: To ensure 100% reliable feedback, the menu bar status item temporarily displays the predicted answer (e.g. `✓ [ B ]`) for 4 seconds before reverting to the idle icon `🔋`.
+- **Built-in Tahoe keyboard**: The application uses macOS's passive HID service client and temporarily sets the built-in keyboard's `HIDCapsLockLED` property to `On`, then restores it to `Auto`. This does not change the user's logical Caps Lock state.
+- **External keyboard fallback**: Standard HID LED output is attempted for attached keyboards. Synthetic Caps Lock events are retained only as a last-resort compatibility fallback when no writable LED service is available.
+- **Compatibility**: `HIDCapsLockLED` is not documented by Apple, so the implementation feature-detects the service and leaves the menu-bar result indicator available if the service is absent.
+- **No-MCQ heartbeat**: When screen text is recognized but no coherent MCQ is detected, the LED produces two quick beats so this condition is distinguishable from ordinary errors.
+- **Answer feedback mapping**: A, B, C, and D produce 1, 2, 3, and 4 LED blinks respectively.
+- **Menu Bar Preview**: Temporarily disabled; the status item remains the idle icon `🔋` while the Caps Lock LED provides the answer feedback.
 
 ---
 
