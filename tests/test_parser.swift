@@ -151,6 +151,27 @@ func calculateTotal(items: [Double]) -> Double {
         let res11 = parser.parse(lines: browserNoiseCluster)
         assertTrue(res11 == nil, "Browser/header option-like noise must be rejected")
 
+        // Compact lowercase command options must remain separate. A previous
+        // fallback rule merged every lowercase line into the preceding option,
+        // turning `stty raw`, `reset tty`, `stty sane`, and `tty reset` into one
+        // malformed answer choice.
+        let terminalResetLines = [
+            "QUESTION 2/3",
+            "Which command resets a terminal to reasonable default settings after it has accidentally been left in raw mode?",
+            "stty raw",
+            "reset tty",
+            "stty sane",
+            "tty reset",
+            "INCORRECT ANSWER"
+        ]
+        let res12 = parser.parse(lines: terminalResetLines)
+        assertTrue(res12 != nil, "Compact terminal command options should be parsed")
+        assertTrue(res12?.options.count == 4, "Terminal command question should keep four options")
+        assertTrue(res12?.options[0].text == "stty raw", "Option A should remain stty raw")
+        assertTrue(res12?.options[1].text == "reset tty", "Option B should remain reset tty")
+        assertTrue(res12?.options[2].text == "stty sane", "Option C should remain stty sane")
+        assertTrue(res12?.options[3].text == "tty reset", "Option D should remain tty reset")
+
         print("=== All QuestionParser Unit Tests PASSED Successfully ===")
     }
 }

@@ -508,7 +508,14 @@ public final class QuestionParser {
                         let lastEndsWithContinuation = last.hasSuffix(",") || last.hasSuffix("-") ||
                             last.range(of: #"(?i)\b(?:the|and|or|that|of|in|to|with|for|a|an|is|are|which|from|by|as)$"#, options: .regularExpression) != nil
 
-                        if startsWithLower || startsWithPunctuation || lastEndsWithContinuation {
+                        // A short lowercase line is often a complete command
+                        // option (for example `reset tty` or `tty reset`), not
+                        // a wrapped continuation. Only merge lowercase text
+                        // when it is long enough to look like a wrapped prose
+                        // line, or when the previous line explicitly signals
+                        // that the sentence continues.
+                        let likelyWrappedLowercaseLine = startsWithLower && line.count > 20
+                        if likelyWrappedLowercaseLine || startsWithPunctuation || lastEndsWithContinuation {
                             candidateLines[candidateLines.count - 1] = "\(last) \(line)"
                             continue
                         }
