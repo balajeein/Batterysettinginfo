@@ -138,7 +138,6 @@ swiftc \
     Sources/Batterysettinginfo/main.swift \
     -L"$BUILD_DIR" -lLlamaBridge \
     -framework IOKit \
-    -framework Security \
     -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     -Xlinker -rpath -Xlinker @loader_path \
     -O \

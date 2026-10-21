@@ -1,8 +1,9 @@
 import Foundation
-import Security
 
 /// Stores per-user online-mode preferences and the NVIDIA API key.
-/// The key is never written to UserDefaults, logs, diagnostics, or the app bundle.
+/// The key is kept only in this user's local app preferences and is never
+/// written to logs, diagnostics, or the app bundle. This intentionally avoids
+/// macOS Keychain access so opening the menu bar cannot trigger a password prompt.
 public final class OnlineSettings: @unchecked Sendable {
     public static let shared = OnlineSettings()
 
@@ -12,8 +13,7 @@ public final class OnlineSettings: @unchecked Sendable {
     }
 
     private let defaultsKey = "Batterysettinginfo.analysisMode"
-    private let keychainService = "com.local.Batterysettinginfo.nvidia-api"
-    private let keychainAccount = "default"
+    private let apiKeyDefaultsKey = "Batterysettinginfo.nvidiaAPIKey"
     private let lock = NSLock()
 
     private init() {}
@@ -37,19 +37,7 @@ public final class OnlineSettings: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecReturnData as String: true
-        ]
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8),
+        guard let value = UserDefaults.standard.string(forKey: apiKeyDefaultsKey),
               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
@@ -63,51 +51,15 @@ public final class OnlineSettings: @unchecked Sendable {
 
         lock.lock()
         defer { lock.unlock() }
-
-        let primaryAttributes: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount
-        ]
-        let data = Data(normalized.utf8)
-
-        let updateStatus = SecItemUpdate(
-            primaryAttributes as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
-        )
-        if updateStatus == errSecSuccess {
-            return true
-        }
-
-        guard updateStatus == errSecItemNotFound else {
-            batteryDiagnosticLog("[OnlineSettings] Keychain update failed with status (updateStatus)", type: .error)
-            return false
-        }
-
-        var addAttributes = primaryAttributes
-        addAttributes[kSecValueData as String] = data
-        addAttributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        let addStatus = SecItemAdd(addAttributes as CFDictionary, nil)
-        if addStatus != errSecSuccess {
-            batteryDiagnosticLog("[OnlineSettings] Keychain save failed with status (addStatus)", type: .error)
-        }
-        return addStatus == errSecSuccess
+        UserDefaults.standard.set(normalized, forKey: apiKeyDefaultsKey)
+        return true
     }
 
     @discardableResult
     public func deleteAPIKey() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        if status != errSecSuccess && status != errSecItemNotFound {
-            batteryDiagnosticLog("[OnlineSettings] Keychain delete failed with status (status)", type: .error)
-        }
-        return status == errSecSuccess || status == errSecItemNotFound
+        UserDefaults.standard.removeObject(forKey: apiKeyDefaultsKey)
+        return true
     }
 }

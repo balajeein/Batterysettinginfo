@@ -579,7 +579,7 @@ public final class MenuBarController: NSObject, FeedbackDelegate, NSMenuDelegate
     @objc private func setNVIDIAKeyClicked() {
         let alert = NSAlert()
         alert.messageText = "Set NVIDIA API Key"
-        alert.informativeText = "Your key is stored securely in macOS Keychain and is used only in Online mode. Do not share your key."
+        alert.informativeText = "Your key is stored locally in this app and is used only in Online mode. Do not share your key."
 
         let field = PasteableSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
         field.placeholderString = "nvapi-…"
@@ -616,15 +616,15 @@ public final class MenuBarController: NSObject, FeedbackDelegate, NSMenuDelegate
         }
 
         if OnlineSettings.shared.saveAPIKey(enteredKey) {
-            batteryDiagnosticLog("[MenuBarController] NVIDIA API key saved to Keychain")
+            batteryDiagnosticLog("[MenuBarController] NVIDIA API key saved to local app settings")
             OnlineSettings.shared.isOnlineMode = true
             statusMenuItem.title = "Online mode ready"
             updateMenuState()
         } else {
-            batteryDiagnosticLog("[MenuBarController] NVIDIA API key could not be saved to Keychain", type: .error)
+            batteryDiagnosticLog("[MenuBarController] NVIDIA API key could not be saved", type: .error)
             let failureAlert = NSAlert()
             failureAlert.messageText = "Could Not Save API Key"
-            failureAlert.informativeText = "macOS Keychain rejected the key. Please try again."
+            failureAlert.informativeText = "The API key could not be saved. Please try again."
             failureAlert.addButton(withTitle: "OK")
             failureAlert.runModal()
         }
@@ -633,7 +633,7 @@ public final class MenuBarController: NSObject, FeedbackDelegate, NSMenuDelegate
     @objc private func clearNVIDIAKeyClicked() {
         guard OnlineSettings.shared.deleteAPIKey() else { return }
         OnlineSettings.shared.isOnlineMode = false
-        batteryDiagnosticLog("[MenuBarController] NVIDIA API key removed from Keychain")
+        batteryDiagnosticLog("[MenuBarController] NVIDIA API key removed from local app settings")
         updateMenuState()
     }
 
